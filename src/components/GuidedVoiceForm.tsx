@@ -39,7 +39,8 @@ const LANGUAGE_OPTIONS = [
   { code: 'english', name: 'English', native: 'English' },
   { code: 'bengali', name: 'Bengali', native: 'বাংলা' },
   { code: 'tamil', name: 'Tamil', native: 'தமிழ்' },
-  { code: 'telugu', name: 'Telugu', native: 'తెలుగు' }
+  { code: 'telugu', name: 'Telugu', native: 'తెలుగు' },
+  { code: 'marathi', name: 'Marathi', native: 'मराठी' }
 ];
 
 export function GuidedVoiceForm({ onComplete, onCancel, className }: GuidedVoiceFormProps) {
@@ -54,8 +55,7 @@ export function GuidedVoiceForm({ onComplete, onCancel, className }: GuidedVoice
     getCurrentStep,
     getCurrentQuestion,
     setWhisperApiKey,
-    toggleSpeechRecognitionMode,
-    getSpeechRecognitionMode
+    processManualInput
   } = useGuidedVoice();
 
   const geoLocation = useGeolocation();
@@ -94,28 +94,17 @@ export function GuidedVoiceForm({ onComplete, onCancel, className }: GuidedVoice
     if (!manualInput.trim()) return;
     
     const currentStep = getCurrentStep();
-    if (currentStep !== 'CONFIRM') {
-      // Map state to field name
-      const fieldMap: Record<string, keyof FormData> = {
-        'ASK_NAME': 'name',
-        'ASK_PRODUCT': 'product',
-        'ASK_QUANTITY': 'quantity',
-        'ASK_QUALITY': 'quality',
-        'ASK_LOCATION': 'location'
-      };
-      
-      const field = fieldMap[currentStep];
-      if (field) {
-        updateField(field, manualInput.trim());
-      }
-    }
+    console.log('Manual submit for step:', currentStep, 'with value:', manualInput.trim());
+    
+    // Use the service's manual input processing
+    processManualInput(manualInput.trim());
     
     setManualInput("");
     setShowManualInput(false);
     
     toast({
-      title: "Field Updated",
-      description: `Field has been filled`,
+      title: "Input Processed",
+      description: `Your input has been processed`,
     });
   };
 
@@ -227,7 +216,7 @@ export function GuidedVoiceForm({ onComplete, onCancel, className }: GuidedVoice
             Step-by-step voice interaction. One question at a time.
             <br />
             <span className="text-sm">
-              Using: {getSpeechRecognitionMode() === 'whisper' ? 'Whisper Large V3 (High Accuracy)' : 'Browser Speech API (Basic)'}
+              Using: Whisper Large V3 (Open-source)
             </span>
           </p>
 
@@ -235,15 +224,9 @@ export function GuidedVoiceForm({ onComplete, onCancel, className }: GuidedVoice
           <div className="mb-6 p-4 rounded-xl bg-muted/20 border border-border">
             <div className="flex items-center justify-between mb-3">
               <h3 className="font-medium text-foreground">Speech Recognition</h3>
-              <button
-                onClick={toggleSpeechRecognitionMode}
-                className="text-sm text-primary hover:underline"
-              >
-                Switch to {getSpeechRecognitionMode() === 'whisper' ? 'Browser' : 'Whisper V3'}
-              </button>
             </div>
             
-            {getSpeechRecognitionMode() === 'whisper' ? (
+            {state.useWhisper ? (
               <div className="space-y-2">
                 <p className="text-sm text-green-600 font-medium">✓ Whisper Large V3 (High Accuracy)</p>
                 <p className="text-xs text-muted-foreground">
@@ -252,15 +235,15 @@ export function GuidedVoiceForm({ onComplete, onCancel, className }: GuidedVoice
               </div>
             ) : (
               <div className="space-y-2">
-                <p className="text-sm text-amber-600 font-medium">⚠ Browser Speech API (Basic)</p>
+                <p className="text-sm text-amber-600 font-medium">⚠ Whisper API key required</p>
                 <p className="text-xs text-muted-foreground">
-                  Uses browser's built-in speech recognition. May have limited accuracy for Indian languages.
+                  Voice input is disabled until you add a free Hugging Face token for Whisper.
                 </p>
                 <button
                   onClick={() => setShowApiKeyInput(true)}
                   className="text-sm text-primary hover:underline"
                 >
-                  Configure Whisper API Key for better accuracy
+                  Configure Whisper API Key
                 </button>
               </div>
             )}
@@ -376,7 +359,7 @@ export function GuidedVoiceForm({ onComplete, onCancel, className }: GuidedVoice
           <div>
             <h2 className="font-bold text-foreground">Guided Voice Form</h2>
             <p className="text-sm text-muted-foreground">
-              Step {state.currentState + 1} of 6 • {state.language} • {getSpeechRecognitionMode() === 'whisper' ? 'Whisper V3' : 'Browser STT'}
+              Step {state.currentState + 1} of 6 • {state.language} • Whisper STT{state.useWhisper ? '' : ' (needs key)'}
             </p>
           </div>
         </div>
@@ -444,14 +427,15 @@ export function GuidedVoiceForm({ onComplete, onCancel, className }: GuidedVoice
         <div className="flex items-center justify-center gap-4">
           <button
             onClick={state.isListening || state.isRecording ? stopListening : startListening}
-            disabled={state.isSpeaking}
+            disabled={state.isSpeaking || !state.useWhisper}
             className={cn(
               "w-16 h-16 rounded-2xl flex items-center justify-center font-bold text-lg transition-all",
               (state.isListening || state.isRecording)
                 ? "bg-destructive text-destructive-foreground animate-pulse" 
                 : "bg-primary text-primary-foreground hover:bg-primary/90",
-              state.isSpeaking && "opacity-50 cursor-not-allowed"
+              (state.isSpeaking || !state.useWhisper) && "opacity-50 cursor-not-allowed"
             )}
+            title={!state.useWhisper ? "Set Whisper API key to enable voice input" : undefined}
           >
             {(state.isListening || state.isRecording) ? <MicOff size={24} /> : <Mic size={24} />}
           </button>
@@ -476,51 +460,6 @@ export function GuidedVoiceForm({ onComplete, onCancel, className }: GuidedVoice
           >
             {showManualInput ? "Hide" : "Type instead"}
           </button>
-          
-          {/* Debug: Test Speech Recognition */}
-          {process.env.NODE_ENV === 'development' && (
-            <button
-              onClick={() => {
-                if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
-                  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-                  const recognition = new SpeechRecognition();
-                  recognition.continuous = false;
-                  recognition.interimResults = true;
-                  recognition.lang = 'en-US';
-                  
-                  recognition.onresult = (event) => {
-                    const result = event.results[event.results.length - 1];
-                    const transcript = result[0].transcript;
-                    console.log('Test recognition result:', transcript);
-                    toast({
-                      title: "Speech Test Result",
-                      description: `Heard: "${transcript}"`,
-                    });
-                  };
-                  
-                  recognition.onerror = (event) => {
-                    console.error('Test recognition error:', event.error);
-                    toast({
-                      title: "Speech Test Error",
-                      description: `Error: ${event.error}`,
-                      variant: "destructive"
-                    });
-                  };
-                  
-                  recognition.start();
-                } else {
-                  toast({
-                    title: "Speech Recognition Not Supported",
-                    description: "Your browser doesn't support speech recognition",
-                    variant: "destructive"
-                  });
-                }
-              }}
-              className="text-sm text-amber-600 hover:underline font-medium"
-            >
-              Test Speech
-            </button>
-          )}
         </div>
 
         {/* Manual Input */}

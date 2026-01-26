@@ -8,6 +8,7 @@
  */
 
 import { indicTTSService } from './indicTTSService';
+import { whisperService } from './whisperService';
 
 // Extend Window interface for speech APIs
 declare global {
@@ -37,7 +38,7 @@ export interface VoiceState {
   lastTranscript: string;
   error: string | null;
   isRetrying: boolean;
-  recognitionMethod: 'browser' | 'annyang' | 'manual';
+  recognitionMethod: 'browser' | 'annyang' | 'manual' | 'whisper';
 }
 
 const STEPS = [
@@ -95,6 +96,10 @@ export class ReliableVoiceService {
   private onComplete: ((data: VoiceFormData) => void) | null = null;
   private currentTimeout: NodeJS.Timeout | null = null;
   private debugMode: boolean = true; // Enable debug logging
+  private lastSpokenStep: Step | null = null;
+  private lastSpokenText = '';
+  private lastSpokenAt = 0;
+  private autoListenTimeout: number | null = null;
   
   private state: VoiceState = {
     isActive: false,
@@ -284,6 +289,7 @@ export class ReliableVoiceService {
 
   private async handleSpeechResult(transcript: string) {
     console.log('Processing speech result:', transcript);
+    this.stopListening();
     
     // Clear any timeouts
     if (this.currentTimeout) {
@@ -357,8 +363,10 @@ export class ReliableVoiceService {
     console.log('Detecting language from:', lowerTranscript);
     
     // Simple and reliable keyword detection
-    if (lowerTranscript.includes('hindi') || lowerTranscript.includes('हिंदी') || 
-        lowerTranscript.includes('हिन्दी')) {
+    if (lowerTranscript.includes('hindi') || lowerTranscript.includes('hindhi') ||
+        lowerTranscript.includes('हिंदी') || lowerTranscript.includes('हिन्दी') ||
+        lowerTranscript.includes('हिंदी में') || lowerTranscript.includes('हिन्दी में') ||
+        lowerTranscript.includes('हिंदी भाषा')) {
       return 'hindi';
     }
     
@@ -439,14 +447,24 @@ export class ReliableVoiceService {
 
   private async speakCurrentQuestion() {
     const currentStep = STEPS[this.state.currentStep];
-    
+    const now = Date.now();
     if (currentStep === 'confirmation') {
       await this.speakSummary();
     } else {
       const questions = QUESTIONS[currentStep];
-      const question = questions[this.state.language as keyof typeof questions] || 
-                      questions['english'];
+      const question = questions[this.state.language as keyof typeof questions] || questions['english'];
+      if (
+        this.lastSpokenStep === currentStep &&
+        this.lastSpokenText === question &&
+        now - this.lastSpokenAt < 3000
+      ) {
+        return;
+      }
+      this.lastSpokenStep = currentStep;
+      this.lastSpokenText = question;
+      this.lastSpokenAt = now;
       await this.speak(question);
+      this.scheduleAutoListen();
     }
   }
 
@@ -469,6 +487,9 @@ export class ReliableVoiceService {
     this.updateState({ isSpeaking: true });
     
     try {
+      if (this.synthesis) {
+        this.synthesis.cancel();
+      }
       // Try Indic TTS first for better quality
       const ttsResponse = await indicTTSService.generateSpeech({
         text,
@@ -478,16 +499,18 @@ export class ReliableVoiceService {
       });
       
       if (ttsResponse.success && typeof window !== 'undefined') {
-        const audio = new Audio(ttsResponse.audioUrl);
-        await new Promise<void>((resolve, reject) => {
-          audio.onended = () => {
-            this.updateState({ isSpeaking: false });
-            resolve();
-          };
-          audio.onerror = reject;
-          audio.play().catch(reject);
-        });
-        return;
+        if (ttsResponse.method !== 'browser-fallback' && ttsResponse.audioUrl) {
+          const audio = new Audio(ttsResponse.audioUrl);
+          await new Promise<void>((resolve, reject) => {
+            audio.onended = () => {
+              this.updateState({ isSpeaking: false });
+              resolve();
+            };
+            audio.onerror = reject;
+            audio.play().catch(reject);
+          });
+          return;
+        }
       }
     } catch (error) {
       console.warn('Indic TTS failed, falling back to browser TTS:', error);
@@ -592,6 +615,10 @@ export class ReliableVoiceService {
       clearTimeout(this.currentTimeout);
       this.currentTimeout = null;
     }
+    if (this.autoListenTimeout) {
+      window.clearTimeout(this.autoListenTimeout);
+      this.autoListenTimeout = null;
+    }
     
     this.updateState({ 
       isActive: false,
@@ -613,6 +640,18 @@ export class ReliableVoiceService {
     // Clear any previous errors
     this.updateState({ error: null, lastTranscript: '' });
     
+    // Prefer Whisper if configured (more accurate for Hindi)
+    if (whisperService.isConfigured()) {
+      this.startWhisperRecording();
+      return;
+    }
+
+    // Prefer Whisper if configured
+    if (whisperService.isConfigured()) {
+      this.startWhisperRecording();
+      return;
+    }
+
     // Try browser speech recognition first
     if (this.recognition) {
       try {
@@ -643,6 +682,40 @@ export class ReliableVoiceService {
     // Fallback to Annyang if browser recognition fails
     console.log('Browser recognition not available, trying Annyang...');
     this.tryAnnyangRecognition();
+  }
+
+  private scheduleAutoListen() {
+    if (!this.state.isActive) return;
+    if (this.state.isListening || this.state.isSpeaking) return;
+    if (this.autoListenTimeout) {
+      window.clearTimeout(this.autoListenTimeout);
+    }
+    this.autoListenTimeout = window.setTimeout(() => {
+      if (!this.state.isActive) return;
+      if (this.state.isListening || this.state.isSpeaking) return;
+      this.startListening();
+    }, 600);
+  }
+
+  private async startWhisperRecording() {
+    try {
+      this.updateState({ isListening: true, error: null, recognitionMethod: 'whisper' });
+      const whisperLangCode = whisperService.mapLanguageCode(this.state.language);
+      const result = await whisperService.recordAndTranscribe(5000, whisperLangCode);
+      this.updateState({ isListening: false });
+
+      if (result.success && result.text) {
+        this.handleSpeechResult(result.text);
+      } else {
+        this.updateState({
+          error: `Whisper failed: ${result.error}. Please try again or use text input.`,
+          recognitionMethod: 'manual'
+        });
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Whisper recording failed.';
+      this.updateState({ isListening: false, error: message, recognitionMethod: 'manual' });
+    }
   }
 
   public stopListening() {

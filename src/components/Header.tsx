@@ -15,9 +15,10 @@ import {
 
 interface HeaderProps {
   className?: string;
+  onHome?: () => void;
 }
 
-export function Header({ className }: HeaderProps) {
+export function Header({ className, onHome }: HeaderProps) {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const { profile, isLoading } = useProfile();
   const navigate = useNavigate();
@@ -66,7 +67,10 @@ export function Header({ className }: HeaderProps) {
       {/* Logo / Brand */}
       <div className="flex items-center gap-3">
         <button
-          onClick={() => navigate("/")}
+          onClick={() => {
+            onHome?.();
+            navigate("/");
+          }}
           className="flex items-center gap-3 hover:opacity-80 transition-all duration-200 cursor-pointer group"
           title="Go to Home"
         >

@@ -62,6 +62,14 @@ export function useGuidedVoice() {
     return guidedVoiceService.getSpeechRecognitionMode();
   }, []);
 
+  const manualAdvanceState = useCallback(() => {
+    guidedVoiceService.manualAdvanceState();
+  }, []);
+
+  const processManualInput = useCallback((input: string) => {
+    guidedVoiceService.processManualInput(input);
+  }, []);
+
   return {
     state,
     start,
@@ -75,6 +83,8 @@ export function useGuidedVoice() {
     goToStep,
     setWhisperApiKey,
     toggleSpeechRecognitionMode,
-    getSpeechRecognitionMode
+    getSpeechRecognitionMode,
+    manualAdvanceState,
+    processManualInput
   };
 }

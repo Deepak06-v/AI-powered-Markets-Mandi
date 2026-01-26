@@ -20,7 +20,8 @@ export interface WhisperTranscriptionResponse {
 }
 
 export class WhisperService {
-  private apiUrl = 'https://api-inference.huggingface.co/models/openai/whisper-large-v3';
+  private apiUrl = import.meta.env.VITE_WHISPER_API_URL || '/api/whisper';
+  private modelName = import.meta.env.VITE_WHISPER_MODEL || 'openai/whisper-large-v3-turbo';
   private apiKey: string | null = null;
 
   constructor() {
@@ -57,12 +58,13 @@ export class WhisperService {
     try {
       // Convert audio blob to the format expected by Hugging Face
       const audioBuffer = await request.audioBlob.arrayBuffer();
+      const contentType = request.audioBlob.type || 'audio/webm';
       
       const response = await fetch(this.apiUrl, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${this.apiKey}`,
-          'Content-Type': 'audio/wav', // or audio/flac, audio/mp3
+          'Content-Type': contentType,
         },
         body: audioBuffer
       });
@@ -71,6 +73,14 @@ export class WhisperService {
         const errorText = await response.text();
         console.error('Whisper API error:', response.status, errorText);
         
+        if (response.status === 410) {
+          return {
+            success: false,
+            text: '',
+            error: `Model ${this.modelName} is unavailable. Try another model via VITE_WHISPER_MODEL.`
+          };
+        }
+
         if (response.status === 503) {
           return {
             success: false,
@@ -130,20 +140,43 @@ export class WhisperService {
     language?: string
   ): Promise<WhisperTranscriptionResponse> {
     try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        return {
+          success: false,
+          text: '',
+          error: 'Microphone access is not available in this browser.'
+        };
+      }
+      if (typeof MediaRecorder === 'undefined') {
+        return {
+          success: false,
+          text: '',
+          error: 'Audio recording is not supported in this browser. Please use Chrome/Brave.'
+        };
+      }
+      const safeDurationMs = Math.max(3000, durationMs);
       // Request microphone access
       const stream = await navigator.mediaDevices.getUserMedia({ 
         audio: {
           sampleRate: 16000, // Whisper prefers 16kHz
           channelCount: 1,   // Mono audio
           echoCancellation: true,
-          noiseSuppression: true
+          noiseSuppression: true,
+          autoGainControl: true
         } 
       });
 
-      // Create MediaRecorder
-      const mediaRecorder = new MediaRecorder(stream, {
-        mimeType: 'audio/webm;codecs=opus' // Good compression and quality
-      });
+      // Create MediaRecorder with a supported mime type
+      const preferredTypes = [
+        'audio/webm;codecs=opus',
+        'audio/webm',
+        'audio/ogg;codecs=opus',
+        'audio/ogg'
+      ];
+      const supportedType = preferredTypes.find(type => MediaRecorder.isTypeSupported(type));
+      const mediaRecorder = supportedType
+        ? new MediaRecorder(stream, { mimeType: supportedType })
+        : new MediaRecorder(stream);
 
       const audioChunks: Blob[] = [];
 
@@ -183,15 +216,28 @@ export class WhisperService {
           reject(new Error(`MediaRecorder error: ${event}`));
         };
 
-        // Start recording
-        mediaRecorder.start();
+        // Start recording (timeslice helps some browsers flush data)
+        mediaRecorder.start(250);
+
+        // Some browsers stop immediately if mic is blocked
+        const startCheck = setTimeout(() => {
+          if (mediaRecorder.state === 'inactive') {
+            try {
+              stream.getTracks().forEach(track => track.stop());
+            } catch {
+              // ignore cleanup errors
+            }
+            reject(new Error('Recording stopped immediately. Check microphone permission or Brave Shields.'));
+          }
+        }, 200);
 
         // Stop after specified duration
         setTimeout(() => {
           if (mediaRecorder.state === 'recording') {
             mediaRecorder.stop();
           }
-        }, durationMs);
+          clearTimeout(startCheck);
+        }, safeDurationMs);
       });
 
     } catch (error) {

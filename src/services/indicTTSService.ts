@@ -50,7 +50,7 @@ const INDIC_LANGUAGE_CODES = {
  * Provides high-quality TTS for Indian languages
  */
 export class IndicTTSService {
-  private readonly IIIT_API_BASE = 'https://bhaasha.iiit.ac.in/indic-tts/api';
+  private readonly IIIT_API_BASE = import.meta.env.VITE_INDIC_TTS_URL || '/api/indic-tts';
   private readonly IIIT_API_KEY = 'demo'; // In production, use environment variable
   
   // Reference audio prompts for different languages (would be hosted)
@@ -203,11 +203,6 @@ export class IndicTTSService {
       }
 
       try {
-        // Create a mock audio blob for browser TTS
-        // In practice, you might want to record the speech synthesis output
-        const mockAudioBlob = this.createMockAudioBlob(request.text);
-        const audioUrl = URL.createObjectURL(mockAudioBlob);
-
         // Also trigger actual speech synthesis for immediate playback
         const utterance = new SpeechSynthesisUtterance(request.text);
         utterance.lang = this.getBrowserLanguageCode(langCode);
@@ -216,7 +211,7 @@ export class IndicTTSService {
 
         utterance.onend = () => {
           resolve({
-            audioUrl,
+            audioUrl: '',
             duration: this.estimateDuration(request.text),
             language: langCode,
             method: 'browser-fallback',
@@ -354,8 +349,8 @@ export class IndicTTSService {
     }
     
     // In production, this would check if the IndicF5 model is loaded
-    // For demo, we'll simulate availability
-    return Math.random() > 0.3; // 70% chance
+    // For now, disable mock audio generation and use browser TTS instead
+    return false;
   }
 
   /**

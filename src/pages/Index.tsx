@@ -61,8 +61,8 @@ const Index = () => {
         buyerMessage: textInput || `I want to buy ${quantity} of ${product}. What's your best price?`
       });
       
-      // Show results
-      setView("price");
+      // Go directly to negotiation after form completion
+      setView("negotiation");
     } catch (error) {
       console.error('AI processing failed:', error);
       setView("error");
@@ -170,7 +170,7 @@ const Index = () => {
     return (
       <PageTransition>
         <div className="min-h-screen flex flex-col bg-background">
-          <Header />
+          <Header onHome={handleBack} />
           <StepIndicator currentStep={3} />
           <AnimatePresence mode="wait">
             <motion.div
@@ -198,7 +198,7 @@ const Index = () => {
     <PageTransition>
       <div className="min-h-screen flex flex-col bg-background grain-overlay">
         <AmbientBackground />
-        <Header />
+        <Header onHome={handleBack} />
         
         {/* Step Indicator */}
         <StepIndicator currentStep={getStepFromView(view)} />
@@ -238,29 +238,6 @@ const Index = () => {
                     Based on nearby market prices
                   </motion.p>
                 </div>
-
-                {/* Reliable Voice Form Button - Primary Feature */}
-                <motion.div 
-                  variants={staggerItem}
-                  className="mb-6"
-                >
-                  <button
-                    onClick={() => setView("reliable-voice")}
-                    className={cn(
-                      "w-full flex items-center justify-center gap-3 py-4 rounded-2xl",
-                      "bg-gradient-to-r from-primary to-primary/80 text-primary-foreground font-bold text-lg",
-                      "shadow-lg shadow-primary/25 hover:shadow-xl hover:shadow-primary/30",
-                      "active:scale-[0.98] transition-all tap-feedback",
-                      "border border-primary/20"
-                    )}
-                  >
-                    <Mic size={20} />
-                    <span>Voice Form</span>
-                    <div className="px-2 py-1 rounded-full bg-primary-foreground/20 text-xs font-bold">
-                      RELIABLE
-                    </div>
-                  </button>
-                </motion.div>
 
                 {/* Voice Button - Quick Option */}
                 <motion.div 
