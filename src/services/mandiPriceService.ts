@@ -5,6 +5,7 @@
  * real commodity prices from AGMARKNET portal for accurate price discovery.
  */
 
+
 export interface MandiPriceRecord {
   state: string;
   district: string;
